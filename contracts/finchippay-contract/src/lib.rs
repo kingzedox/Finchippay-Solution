@@ -69,6 +69,14 @@ pub enum ContractError {
     InsufficientFunds = 11,
     /// The contract is paused; value-transferring operations are blocked.
     ContractPaused = 12,
+    /// Self-transfers are not allowed (from == to).
+    SelfTransfer = 13,
+    /// The batch size exceeds the maximum allowed recipients.
+    BatchTooLarge = 14,
+    /// Duplicate signer detected in the signers list.
+    DuplicateSigner = 15,
+    /// The proposal has expired and can no longer be approved.
+    ProposalExpired = 16,
 }
 
 // ─── Shared data types ────────────────────────────────────────────────────────
