@@ -210,6 +210,8 @@ const CONTRACT_VERSION: u32 = 2;
 #[contracttype]
 pub enum DataKey {
     Admin,
+    /// Separate role that can pause/unpause without admin upgrade rights.
+    Pauser,
     Paused,
     /// Stored contract version; bumped on upgrade.
     Version,
@@ -325,10 +327,19 @@ impl FinchippayContract {
 
     /// Admin: pause all value-transferring operations. Read-only functions remain
     /// accessible so users can still inspect escrows, streams, and proposals.
-    pub fn pause(env: Env, admin: Address) {
-        admin.require_auth();
-        let stored = get_admin(&env);
-        if admin != stored {
+    /// Can be called by either the admin or the designated pauser.
+    pub fn pause(env: Env, caller: Address) {
+        caller.require_auth();
+        let stored_admin = get_admin(&env);
+        let stored_pauser: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Pauser);
+        let is_pauser = stored_pauser
+            .as_ref()
+            .map(|p| p == &caller)
+            .unwrap_or(false);
+        if caller != stored_admin && !is_pauser {
             panic!("Unauthorized");
         }
         env.storage().persistent().set(&DataKey::Paused, &true);
@@ -338,16 +349,49 @@ impl FinchippayContract {
     }
 
     /// Admin: resume all value-transferring operations.
-    pub fn unpause(env: Env, admin: Address) {
-        admin.require_auth();
-        let stored = get_admin(&env);
-        if admin != stored {
+    /// Can be called by either the admin or the designated pauser.
+    pub fn unpause(env: Env, caller: Address) {
+        caller.require_auth();
+        let stored_admin = get_admin(&env);
+        let stored_pauser: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Pauser);
+        let is_pauser = stored_pauser
+            .as_ref()
+            .map(|p| p == &caller)
+            .unwrap_or(false);
+        if caller != stored_admin && !is_pauser {
             panic!("Unauthorized");
         }
         env.storage().persistent().set(&DataKey::Paused, &false);
         bump(&env, &DataKey::Paused);
         env.events()
             .publish((Symbol::new(&env, "unpaused"),), ());
+    }
+
+    /// Admin: set or clear the pauser address. Only the admin may call this.
+    /// The pauser can call pause/unpause but cannot upgrade or transfer admin.
+    pub fn set_pauser(env: Env, admin: Address, pauser: Address) {
+        admin.require_auth();
+        let stored = get_admin(&env);
+        if admin != stored {
+            panic!("Unauthorized");
+        }
+        env.storage().persistent().set(&DataKey::Pauser, &pauser);
+        bump(&env, &DataKey::Pauser);
+        env.events()
+            .publish((Symbol::new(&env, "pauser_set"),), pauser);
+    }
+
+    /// Return the current pauser address, if one is set.
+    pub fn get_pauser(env: Env) -> Option<Address> {
+        let key = DataKey::Pauser;
+        let val: Option<Address> = env.storage().persistent().get(&key);
+        if val.is_some() {
+            bump(&env, &key);
+        }
+        val
     }
 
     /// Return the current contract version.
