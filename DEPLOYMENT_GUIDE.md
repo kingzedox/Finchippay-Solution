@@ -238,6 +238,15 @@ The implementation includes 13 comprehensive test functions:
 12. **test_invalid_rate** - Input validation for rates
 13. **test_invalid_deposit** - Input validation for deposits
 
+## Security Features (v2 Contract)
+
+The `FinchippayContract` v2 includes:
+- **Emergency pause**: admin can freeze all value-transferring operations
+- **Upgradability**: admin can hot-patch the contract WASM without state migration
+- **Deposit/timelock bounds**: prevents griefing and permanent fund lock-up
+- **Cumulative top-up caps**: stream deposit limits enforced across top-ups
+- **Version tracking**: on-chain version counter incremented on each upgrade
+
 ## Next Steps
 
 1. **Deploy to Testnet**: Test the contract on Stellar testnet

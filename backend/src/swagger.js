@@ -14,7 +14,7 @@ const options = {
       title: "Finchippay Solution API",
       version: "1.0.0",
       description:
-        "Backend API for Finchippay Solution — instant micropayments on the Stellar network.\n\n" +
+        "Backend API for Finchippay Solution — instant, low-fee payments on the Stellar network.\n\n" +
         "## Rate Limiting\n\n" +
         "All endpoints are rate-limited. Two limiters apply:\n\n" +
         "| Limiter | Window | Limit | Routes |\n" +

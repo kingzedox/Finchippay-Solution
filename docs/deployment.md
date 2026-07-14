@@ -64,6 +64,10 @@ bash scripts/deploy-contract.sh mainnet <your-identity>
 # Copy the CONTRACT_ID output into frontend/.env.local
 ```
 
+**Important**: After deployment, call `initialize(admin)` then `pause(admin)` to verify the circuit breaker works. Unpause before going live.
+
+The contract includes emergency pause, upgradability, and deposit/timelock bounds. See `contracts/finchippay-contract/README.md` for the full security model.
+
 ### 4. Build and start
 
 ```bash

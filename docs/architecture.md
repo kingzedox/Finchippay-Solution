@@ -54,6 +54,9 @@ Key design decisions:
 - **Checked arithmetic**: all additions, subtractions, and multiplications use `checked_*` methods.
 - **Event emission**: every state change emits a structured Soroban event for off-chain indexers.
 - **Storage TTL**: persistent entries are bumped to 500,000 ledgers (~1 year) to prevent expiry.
+- **Emergency pause**: admin can call `pause()` to freeze all value-transferring operations (circuit breaker). Read-only queries remain accessible during pause.
+- **Upgradability**: admin can call `upgrade(new_wasm_hash)` to deploy security patches without state migration. Version counter is incremented on each upgrade.
+- **Bounded inputs**: escrow timelocks, stream deposits/rates, and multi-sig amounts are capped to prevent griefing, overflow, and permanent fund lock-up.
 
 ### Backend (`backend/`)
 
@@ -120,4 +123,8 @@ Key components:
 | CSP | Helmet enforces strict Content-Security-Policy on all API responses |
 | Auth | SEP-0010 JWT — signed by Freighter, verified by backend middleware |
 | Contract auth | Every mutating entry-point calls `require_auth()` |
+| Emergency pause | Admin `pause()`/`unpause()` freezes value-transferring operations |
+| Upgradability | Admin `upgrade()` replaces contract WASM; version tracked on-chain |
+| Bounded inputs | Deposit caps, rate limits, timelock maximums prevent griefing |
+| Top-up enforcement | Cumulative stream deposit checked against `MAX_STREAM_DEPOSIT` |
 | Overflow safety | Checked arithmetic throughout the Soroban contract |
