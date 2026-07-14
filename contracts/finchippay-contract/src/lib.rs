@@ -212,6 +212,8 @@ const MAX_STREAM_DEPOSIT: i128 = 1_000_000_000_000_000_000;
 const MAX_STREAM_RATE: i128 = 10_000_000_000;
 /// Maximum amount for a single escrow deposit.
 const MAX_ESCROW_AMOUNT: i128 = 1_000_000_000_000_000_000;
+/// Maximum amount for a single multi-sig proposal.
+const MAX_MULTISIG_AMOUNT: i128 = 1_000_000_000_000_000_000;
 /// Minimum amount for a single escrow deposit (prevents dust attacks).
 const MIN_ESCROW_AMOUNT: i128 = 1_000;
 /// Minimum amount for a single multi-sig proposal.
@@ -220,7 +222,7 @@ const MIN_MULTISIG_AMOUNT: i128 = 1_000;
 const MAX_MULTISIG_SIGNERS: u32 = 20;
 /// Maximum number of recipients allowed in a single batch_send call.
 const MAX_BATCH_SIZE: u32 = 50;
-/// Maximum length for Symbol memo fields in characters.
+/// Maximum length for memo fields (enforced by Symbol type, kept for reference).
 const MAX_MEMO_LENGTH: u32 = 32;
 /// Contract version identifier (used for off-chain discovery).
 const CONTRACT_VERSION: u32 = 3;
@@ -257,12 +259,10 @@ pub enum DataKey {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn bump<K: soroban_sdk::TryIntoVal<Env, soroban_sdk::Val> + soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &K) {
-    env.storage().persistent().extend_ttl(
-        key,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
+fn bump<K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &K) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
 }
 
 fn get_admin(env: &Env) -> Address {
@@ -278,7 +278,7 @@ fn get_admin(env: &Env) -> Address {
 
 /// Get a token client for a given token address, avoiding repeated
 /// boilerplate across all token-interacting functions.
-fn get_token_client(env: &Env, token_address: &Address) -> token::Client {
+fn get_token_client<'a>(env: &'a Env, token_address: &'a Address) -> token::Client<'a> {
     token::Client::new(env, token_address)
 }
 
@@ -589,9 +589,6 @@ impl FinchippayContract {
         require_initialized(&env);
         require_not_paused(&env);
         from.require_auth();
-        if memo.len() > MAX_MEMO_LENGTH {
-            panic!("memo exceeds maximum length");
-        }
         if amount <= 0 {
             panic!("Receipt amount must be positive");
         }
