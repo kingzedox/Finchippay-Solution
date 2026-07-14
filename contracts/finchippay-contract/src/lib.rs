@@ -604,6 +604,9 @@ impl FinchippayContract {
         require_initialized(&env);
         require_not_paused(&env);
         from.require_auth();
+        if memo.len() > MAX_MEMO_LENGTH {
+            panic!("memo exceeds maximum length");
+        }
         if amount <= 0 {
             panic!("Receipt amount must be positive");
         }
