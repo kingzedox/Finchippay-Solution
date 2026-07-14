@@ -82,12 +82,13 @@ pub enum ContractError {
 // ─── Shared data types ────────────────────────────────────────────────────────
 
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct TipRecord {
+#[derive(Clone, Debug)]    pub struct TipRecord {
     pub from: Address,
     pub to: Address,
     pub amount: i128,
     pub ledger: u32,
+    /// Optional memo attached to the tip for off-chain context.
+    pub memo: Symbol,
 }
 
 #[contracttype]
@@ -112,8 +113,7 @@ pub enum EscrowStatus {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct Escrow {
+#[derive(Clone, Debug)]    pub struct Escrow {
     pub id: u32,
     pub from: Address,
     pub to: Address,
@@ -121,6 +121,8 @@ pub struct Escrow {
     pub amount: i128,
     pub release_ledger: u32,
     pub status: EscrowStatus,
+    /// Optional memo attached to the escrow for off-chain context.
+    pub memo: Symbol,
 }
 
 /// Maximum number of escrows tracked per recipient index (prevents state bloat).
@@ -471,6 +473,34 @@ impl FinchippayContract {
         );
     }
 
+    /// Admin: rescue tokens accidentally sent directly to the contract address.
+    /// Since all legitimate funds are tracked via escrow/stream/multisig IDs,
+    /// any unbounded tokens held by the contract can be safely swept by the admin
+    /// to a designated address. Only the admin may call this.
+    pub fn rescue_tokens(
+        env: Env,
+        admin: Address,
+        token_address: Address,
+        amount: i128,
+        to: Address,
+    ) {
+        admin.require_auth();
+        let stored = get_admin(&env);
+        if admin != stored {
+            panic!("Unauthorized");
+        }
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+        let token = token::Client::new(&env, &token_address);
+        token.transfer(&env.current_contract_address(), &to, &amount);
+
+        env.events().publish(
+            (Symbol::new(&env, "rescue_tokens"),),
+            (token_address, amount, to),
+        );
+    }
+
     // ─── Tips ─────────────────────────────────────────────────────────────────
 
     /// Transfer `amount` tokens from `from` to `to` and record the tip on-chain.
@@ -478,7 +508,7 @@ impl FinchippayContract {
     /// # Errors
     /// Panics if `amount <= 0`, the contract is paused, or `from` has not
     /// authorised the call.
-    pub fn send_tip(env: Env, token_address: Address, from: Address, to: Address, amount: i128) {
+    pub fn send_tip(env: Env, token_address: Address, from: Address, to: Address, amount: i128, memo: Symbol) {
         require_initialized(&env);
         require_not_paused(&env);
         from.require_auth();
@@ -518,6 +548,7 @@ impl FinchippayContract {
             to: to.clone(),
             amount,
             ledger: env.ledger().sequence(),
+            memo,
         };
         env.storage()
             .persistent()
@@ -637,6 +668,7 @@ impl FinchippayContract {
         to: Address,
         amount: i128,
         release_ledger: u32,
+        memo: Symbol,
     ) -> u32 {
         require_initialized(&env);
         require_not_paused(&env);
@@ -673,6 +705,7 @@ impl FinchippayContract {
             amount,
             release_ledger,
             status: EscrowStatus::Pending,
+            memo,
         };
         env.storage()
             .persistent()
@@ -698,9 +731,55 @@ impl FinchippayContract {
 
         env.events().publish(
             (Symbol::new(&env, "escrow_create"), next_id),
-            (from, to, amount, release_ledger),
+            (from.clone(), to.clone(), amount, release_ledger),
         );
         next_id
+    }
+
+    /// Claim a partial amount from the escrow. The caller must be the
+    /// escrow recipient and the release ledger must have passed.
+    /// Returns the remaining escrow amount after the partial claim.
+    pub fn claim_escrow_partial(env: Env, id: u32, claim_amount: i128) -> i128 {
+        require_not_paused(&env);
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(id))
+            .expect("escrow not found");
+        if escrow.status != EscrowStatus::Pending {
+            panic!("escrow is not pending");
+        }
+        if env.ledger().sequence() < escrow.release_ledger {
+            panic!("release_ledger not reached");
+        }
+        escrow.to.require_auth();
+        if claim_amount <= 0 {
+            panic!("claim amount must be positive");
+        }
+        if claim_amount > escrow.amount {
+            panic!("claim amount exceeds escrow balance");
+        }
+
+        let token = token::Client::new(&env, &escrow.token);
+        token.transfer(&env.current_contract_address(), &escrow.to, &claim_amount);
+
+        let remaining = escrow.amount - claim_amount;
+        if remaining == 0 {
+            escrow.status = EscrowStatus::Released;
+            escrow.amount = 0;
+        } else {
+            escrow.amount = remaining;
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(id), &escrow);
+        bump(&env, &DataKey::Escrow(id));
+
+        env.events().publish(
+            (Symbol::new(&env, "escrow_claim_partial"), id),
+            (escrow.to.clone(), claim_amount, remaining),
+        );
+        remaining
     }
 
     /// Return the list of escrow IDs associated with a recipient address.
@@ -995,6 +1074,64 @@ impl FinchippayContract {
         env.events().publish(
             (Symbol::new(&env, "stream_close"), stream_id),
             (payer, refund),
+        );
+        refund
+    }
+
+    /// Recipient rejects an open stream. Any accrued-but-unclaimed tokens are
+    /// sent to the recipient first; the remainder is refunded to the payer.
+    /// This allows a recipient to opt out of a stream for compliance or personal
+    /// reasons.
+    ///
+    /// Returns the refund amount sent back to the payer.
+    pub fn reject_stream(env: Env, stream_id: u32, recipient: Address) -> i128 {
+        require_not_paused(&env);
+        recipient.require_auth();
+
+        let mut stream: Stream = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Stream(stream_id))
+            .expect("stream not found");
+
+        if stream.recipient != recipient {
+            panic!("only the recipient may reject the stream");
+        }
+        if stream.closed {
+            panic!("stream is already closed");
+        }
+
+        let token = token::Client::new(&env, &stream.token);
+
+        // Pay accrued tokens to recipient.
+        let claimable = Self::_claimable(&env, &stream);
+        if claimable > 0 {
+            token.transfer(
+                &env.current_contract_address(),
+                &recipient,
+                &claimable,
+            );
+            stream.claimed = stream.claimed.checked_add(claimable).expect("overflow");
+        }
+
+        // Refund remaining to payer.
+        let refund = stream
+            .deposited
+            .checked_sub(stream.claimed)
+            .expect("underflow");
+        if refund > 0 {
+            token.transfer(&env.current_contract_address(), &stream.payer, &refund);
+        }
+
+        stream.closed = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Stream(stream_id), &stream);
+        bump(&env, &DataKey::Stream(stream_id));
+
+        env.events().publish(
+            (Symbol::new(&env, "stream_reject"), stream_id),
+            (recipient, refund),
         );
         refund
     }
