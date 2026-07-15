@@ -908,7 +908,11 @@ export async function getPaymentHistory(
         category: TransactionCategory.Payment,
       };
     } else if (op.type === "account_merge") {
-      const merge = op as any; // Cast to any to access Horizon properties that might be missing in type definitions
+      const merge = op as Horizon.HorizonApi.AccountMergeOperationResponse & {
+        source_account?: string;
+        account?: string;
+        into?: string;
+      };
 
       record = {
         id: merge.id,
@@ -1331,7 +1335,7 @@ export function streamPayments(
     .cursor("now");
 
   const close = paymentsBuilder.stream({
-    onmessage: async (op: any) => {
+    onmessage: async (op) => {
       if (op.type !== "payment") return;
 
       const payment = op as Horizon.HorizonApi.PaymentOperationResponse;
@@ -1604,17 +1608,17 @@ export async function fetchTradeAggregations(
     .order("desc")
     .call();
 
-  return records.records.map((r: any) => ({
-    timestamp: parseInt(r.timestamp),
-    trade_count: r.trade_count,
-    base_volume: r.base_volume,
-    counter_volume: r.counter_volume,
-    avg: r.avg,
-    high: r.high,
-    low: r.low,
-    open: r.open,
-    close: r.close,
-    price: r.close,
+  return records.records.map((r) => ({
+    timestamp: Number(r.timestamp),
+    trade_count: Number(r.trade_count),
+    base_volume: String(r.base_volume),
+    counter_volume: String(r.counter_volume),
+    avg: String(r.avg),
+    high: String(r.high),
+    low: String(r.low),
+    open: String(r.open),
+    close: String(r.close),
+    price: String(r.close),
   }));
 }
 
@@ -1623,13 +1627,13 @@ export async function fetchTradeAggregations(
  */
 export async function fetchOpenOffers(publicKey: string): Promise<OpenOffer[]> {
   const result = await server.offers().forAccount(publicKey).call();
-  return result.records.map((r: any) => ({
+  return result.records.map((r) => ({
     id: r.id,
-    seller: r.seller,
-    selling: r.selling,
-    buying: r.buying,
-    amount: r.amount,
-    price: r.price,
+    seller: r.seller as string,
+    selling: r.selling as unknown as Asset,
+    buying: r.buying as unknown as Asset,
+    amount: r.amount as string,
+    price: r.price as string,
   }));
 }
 
@@ -1830,8 +1834,9 @@ export async function resolveStellarName(name: string): Promise<string> {
     if (!record.account_id) throw new Error('Name resolved but no address found')
     snsCache.set(trimmed, { address: record.account_id, expiresAt: Date.now() + SNS_CACHE_TTL_MS })
     return record.account_id
-  } catch (err: any) {
-    throw new Error(`Could not resolve "${trimmed}": ${err.message ?? 'Unknown error'}`)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    throw new Error(`Could not resolve "${trimmed}": ${msg}`)
   }
 }
 
@@ -1944,7 +1949,15 @@ export async function getEscrow(callerPublicKey: string, id: number): Promise<Es
       .build();
     const sim = await sorobanServer.simulateTransaction(tx);
     if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) return null;
-    const decoded = scValToNative(sim.result.retval) as any;
+    const decoded = scValToNative(sim.result.retval) as {
+      id: number;
+      from: string;
+      to: string;
+      token: string;
+      amount: bigint;
+      release_ledger: number;
+      status?: string;
+    };
     // contract returns the Escrow struct as a map keyed by field name
     return {
       id: Number(decoded.id),
@@ -1953,8 +1966,9 @@ export async function getEscrow(callerPublicKey: string, id: number): Promise<Es
       token: decoded.token,
       amount: String(decoded.amount),
       releaseLedger: Number(decoded.release_ledger),
-      status:
-        decoded.status?.tag ?? decoded.status ?? "Pending",
+      status: (typeof decoded.status === 'string'
+        ? decoded.status
+        : 'Pending') as EscrowRecord['status'],
     };
   } catch {
     return null;
