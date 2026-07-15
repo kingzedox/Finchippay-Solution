@@ -1,6 +1,6 @@
 "use strict";
 
-const { Horizon, Transaction, Networks } = require("stellar-sdk");
+const { Horizon, Transaction, Networks } = require("@stellar/stellar-sdk");
 
 const NETWORK = process.env.NEXT_PUBLIC_STELLAR_NETWORK || "testnet"; // Use env var from backend
 const HORIZON_URL =
