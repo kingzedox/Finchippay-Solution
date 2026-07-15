@@ -22,6 +22,8 @@ const federationRoutes = require("./routes/federation");
 const turretsRoutes = require("./routes/turrets");
 const tipsRoutes = require("./routes/tips");
 const webhookRoutes = require("./routes/webhooks");
+const parsePaymentRoutes = require("./routes/parsePayment");
+const scheduledTransactionRoutes = require("./routes/scheduledTransactions");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
 const { startTurretsServer } = require("./turretsServer");
@@ -201,6 +203,8 @@ app.use("/api/webhooks", webhookRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/turrets", turretsRoutes);
 app.use("/api/tips", tipsRoutes);
+app.use("/api/parse-payment", parsePaymentRoutes);
+app.use("/api/scheduled-txns", scheduledTransactionRoutes);
 app.use("/federation", federationRoutes);
 
 // ─── API Documentation ─────────────────────────────────────────────────────────

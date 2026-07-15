@@ -55,7 +55,8 @@ export default function AIPaymentAssistant({
     setParsedIntent(null);
 
     try {
-      const response = await fetch("/api/parse-payment", {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+      const response = await fetch(`${apiUrl}/api/parse-payment`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
