@@ -83,6 +83,8 @@ jobs:
 
       - name: Unit tests
         run: npm test
+        env:
+          ANTHROPIC_API_KEY: test-key-for-ci
 
   # ─── Contracts ─────────────────────────────────────────────────────────────
   contracts:
@@ -174,6 +176,7 @@ jobs:
           STELLAR_NETWORK: testnet
           HORIZON_URL: https://horizon-testnet.stellar.org
           JWT_SECRET: test-secret
+          ANTHROPIC_API_KEY: test-key-for-ci
 
       - name: Run E2E tests
         working-directory: frontend

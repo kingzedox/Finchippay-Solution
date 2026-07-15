@@ -27,6 +27,8 @@ services:
       - STELLAR_NETWORK=mainnet
       - HORIZON_URL=https://horizon.stellar.org
       - TURRETS_EVALUATION_INTERVAL_MS=60000
+      # Optional: set to enable AI payment parsing via Anthropic
+      # - ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
       interval: 30s

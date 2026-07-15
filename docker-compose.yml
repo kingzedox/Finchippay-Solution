@@ -24,6 +24,8 @@ services:
       - ALLOWED_ORIGINS=http://localhost:3000
       - JWT_SECRET=dev-secret-change-in-production
       - TURRETS_EVALUATION_INTERVAL_MS=30000
+      # Optional: set to enable AI payment parsing via Anthropic
+      # - ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
     volumes:
       # Mount source for hot-reload via nodemon
       - ./backend:/app
