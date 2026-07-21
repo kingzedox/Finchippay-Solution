@@ -11,6 +11,7 @@ import QuickSendModal from "@/components/QuickSendModal";
 import { ToastContainer } from "@/components/Toast";
 import { ToastProvider } from "@/lib/ToastContext";
 import { WalletProvider, useWallet } from "@/lib/useWallet";
+import OfflineBanner from "@/components/OfflineBanner";
 import {
   getStellarURIFromURL,
   registerProtocolHandler,
@@ -126,6 +127,7 @@ function AppShell({
   return (
     <>
       <div className="min-h-screen bg-white bg-grid transition-colors duration-300 dark:bg-cosmos-900">
+        <OfflineBanner />
         <Navbar />
         <main>
           <Component {...pageProps} stellarURI={stellarURI} />
