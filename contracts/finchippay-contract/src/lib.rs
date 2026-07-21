@@ -282,15 +282,18 @@ fn get_token_client<'a>(env: &'a Env, token_address: &'a Address) -> token::Clie
 
 /// Check that the contract is not paused. Panics with `ContractPaused` if it is.
 fn require_not_paused(env: &Env) {
+    let key = DataKey::Paused;
     let paused: bool = env
         .storage()
         .persistent()
-        .get(&DataKey::Paused)
+        .get(&key)
         .unwrap_or(false);
     if paused {
         panic!("Contract is paused");
     }
-    bump(env, &DataKey::Paused);
+    if env.storage().persistent().has(&key) {
+        bump(env, &key);
+    }
 }
 
 /// Check that the contract has been initialised. Panics if `initialize()` was
@@ -306,6 +309,8 @@ fn require_initialized(env: &Env) {
 pub struct FinchippayContract;
 
 #[contractimpl]
+// TODO(#XX): migrate env.events().publish() calls to #[contractevent] macro
+#[allow(deprecated)]
 impl FinchippayContract {
     // ─── Admin ────────────────────────────────────────────────────────────────
 
@@ -1583,14 +1588,15 @@ impl FinchippayContract {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env, Symbol};
+    use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Symbol};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    fn deploy(env: &Env) -> (Address, FinchippayContractClient) {
-        let id = env.register_contract(None, FinchippayContract);
+    fn deploy(env: &Env) -> (Address, FinchippayContractClient<'_>) {
+        let id = env.register(FinchippayContract, ());
         let client = FinchippayContractClient::new(env, &id);
         let admin = Address::generate(env);
         client.initialize(&admin);
@@ -1598,7 +1604,8 @@ mod tests {
     }
 
     fn create_token(env: &Env, admin: &Address, to: &Address, amount: i128) -> Address {
-        let token_id = env.register_stellar_asset_contract(admin.clone());
+        let sac_contract = env.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = sac_contract.address();
         let sac = token::StellarAssetClient::new(env, &token_id);
         sac.mint(to, &amount);
         token_id
@@ -1622,7 +1629,7 @@ mod tests {
     #[test]
     fn test_double_initialize_returns_error() {
         let env = Env::default();
-        let id = env.register_contract(None, FinchippayContract);
+        let id = env.register(FinchippayContract, ());
         let client = FinchippayContractClient::new(&env, &id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -1687,15 +1694,15 @@ mod tests {
         let from = Address::generate(&env);
         let to = Address::generate(&env);
         env.mock_all_auths();
-        let token_id = create_token(&env, &admin, &from, 500);
+        let token_id = create_token(&env, &admin, &from, 1000);
         let token = token::Client::new(&env, &token_id);
         let release = env.ledger().sequence() + 10;
-        let id = client.create_escrow(&token_id, &from, &to, &500, &release, &Symbol::new(&env, "e1"));
+        let id = client.create_escrow(&token_id, &from, &to, &1000, &release, &Symbol::new(&env, "e1"));
         assert_eq!(token.balance(&from), 0);
-        assert_eq!(token.balance(&contract_id), 500);
+        assert_eq!(token.balance(&contract_id), 1000);
         advance(&env, release + 1);
         client.claim_escrow(&id);
-        assert_eq!(token.balance(&to), 500);
+        assert_eq!(token.balance(&to), 1000);
         assert_eq!(client.get_escrow(&id).status, EscrowStatus::Released);
     }
 
@@ -1707,12 +1714,12 @@ mod tests {
         let from = Address::generate(&env);
         let to = Address::generate(&env);
         env.mock_all_auths();
-        let token_id = create_token(&env, &admin, &from, 200);
+        let token_id = create_token(&env, &admin, &from, 1000);
         let token = token::Client::new(&env, &token_id);
         let release = env.ledger().sequence() + 50;
-        let id = client.create_escrow(&token_id, &from, &to, &200, &release, &Symbol::new(&env, "e2"));
+        let id = client.create_escrow(&token_id, &from, &to, &1000, &release, &Symbol::new(&env, "e2"));
         client.cancel_escrow(&id);
-        assert_eq!(token.balance(&from), 200);
+        assert_eq!(token.balance(&from), 1000);
         assert_eq!(client.get_escrow(&id).status, EscrowStatus::Cancelled);
     }
 
@@ -2023,8 +2030,8 @@ mod tests {
             &token_id, &payer, &recipient,
             &MAX_STREAM_RATE, &MAX_STREAM_DEPOSIT,
         );
-        // Advance to a very large ledger — claimable should cap at deposit.
-        advance(&env, start + 1_000_000);
+        // Advance far enough that total_streamed >= deposited (10^18 / 10^10 = 10^8 ledgers).
+        advance(&env, start + 100_000_000);
         let claimable = client.get_claimable(&sid);
         assert_eq!(claimable, MAX_STREAM_DEPOSIT);
     }
@@ -2068,7 +2075,7 @@ mod tests {
     #[should_panic(expected = "Contract not initialized")]
     fn test_send_tip_before_initialize_panics() {
         let env = Env::default();
-        let id = env.register_contract(None, FinchippayContract);
+        let id = env.register(FinchippayContract, ());
         let client = FinchippayContractClient::new(&env, &id);
         let from = Address::generate(&env);
         let to = Address::generate(&env);
@@ -2082,7 +2089,7 @@ mod tests {
     #[should_panic(expected = "Contract not initialized")]
     fn test_create_escrow_before_initialize_panics() {
         let env = Env::default();
-        let id = env.register_contract(None, FinchippayContract);
+        let id = env.register(FinchippayContract, ());
         let client = FinchippayContractClient::new(&env, &id);
         let from = Address::generate(&env);
         let to = Address::generate(&env);
