@@ -1,59 +1,58 @@
-# Security: Validate token address is a known SEP-0041 token before accepting deposits
+# Bug: Wallet disconnect does not clear JWT token — stale auth persists across sessions
 
-**Closes #67**
+**Closes #89**
 
 ## Problem
 
-The contract functions `create_escrow`, `open_stream`, `create_multisig`, `send_tip`, `top_up_stream`, and `batch_send` accepted arbitrary `token_address` values and immediately called `token.transfer()` without verifying that the token actually transferred the funds. A malicious or buggy SEP-0041 token contract could report a successful transfer without moving any tokens, allowing an attacker to create "phantom" escrows, streams, or multi-sig proposals that pass on-chain validation despite holding no real value.
+The application uses two separate JWT token storage mechanisms that were not synchronized:
 
-## Solution: Balance-Check Guard (`require_transfer_succeeded`)
+1. **In-memory token** (`frontend/lib/wallet.ts`): A module-level `jwtToken` variable managed by `setJwtToken()`/`getJwtToken()` — used during the SEP-0010 auth flow.
+2. **LocalStorage token** (`frontend/lib/auth.ts`): Persisted under `finchippay_auth_token` — used by API calls to set the `Authorization: Bearer <token>` header.
 
-Rather than an allow-list (which requires governance and is not permissionless), we implemented a **balance-check approach**:
+When a user disconnected their Freighter wallet:
+- `useWallet.tsx` called `wallet.disconnectWallet()` which cleared only the **in-memory** token
+- The **localStorage** token (`finchippay_auth_token`) was never cleared
+- Subsequent API requests continued including the stale `Authorization` header
+- No redirect to the landing page occurred
 
-```rust
-fn require_transfer_succeeded(env, token, from, to, amount) {
-    let balance_before = token.balance(to);
-    token.transfer(from, to, amount);
-    let balance_after = token.balance(to);
-    let expected_min = balance_before.checked_add(amount);
-    if balance_after < expected_min { panic!("TransferFailed"); }
-}
-```
+## Solution
 
-### What changed
+### 1. Sync localStorage on auth (`frontend/lib/wallet.ts`)
+- `performSEP0010Auth()` now persists the JWT to localStorage via `auth.setJwtToken(token)` after storing it in memory
+- `disconnectWallet()` now clears localStorage via `auth.clearJwtToken()` in addition to clearing the in-memory token
+
+### 2. Redirect on disconnect (`frontend/lib/useWallet.tsx`)
+- Added `useRouter` from `next/router`
+- `disconnectWallet()` now calls `router.push("/")` to redirect the user to the landing page after disconnecting
+- `router` is included in the `useMemo` dependency array
+
+### 3. Updated unit tests (`frontend/__tests__/wallet.test.ts`)
+- Added mock for `@/lib/auth`
+- New test: `disconnectWallet clears localStorage auth token` — verifies `clearJwtToken()` is called
+- New test: `persists JWT token to localStorage on successful auth` — verifies `setJwtToken()` is called with the correct token
+
+### 4. Added E2E test (`frontend/e2e/wallet-connect.spec.ts`)
+- New scenario 4: "disconnect wallet clears JWT token and redirects to landing page"
+- Verifies: connect wallet → disconnect via navbar → confirm → redirect to `/` → connect button visible
+
+## Files Changed
 
 | File | Change |
 |------|--------|
-| `contracts/finchippay-contract/src/lib.rs` | Added `require_transfer_succeeded()` helper with balance-check logic |
-| `contracts/finchippay-contract/src/lib.rs` | Added `TransferFailed = 17` error variant |
-| `contracts/finchippay-contract/src/lib.rs` | Replaced raw `token.transfer()` calls in 6 functions with `require_transfer_succeeded()` |
-| `contracts/finchippay-contract/src/lib.rs` | Added `MaliciousToken` mock contract (no-op transfer) and 7 new tests |
-| `contracts/finchippay-contract/src/lib.rs` | Fixed `require_not_paused()` to avoid bumping a non-existent `Paused` storage key (caused `Error(Storage, MissingValue)` in tests) |
-| `contracts/finchippay-contract/src/lib.rs` | Fixed test amounts below `MIN_ESCROW_AMOUNT` (1000) in escrow and malicious token tests |
-| `contracts/finchippay-contract/src/lib.rs` | Fixed stream overflow safety test expected value |
-| `contracts/finchippay-contract/src/lib.rs` | Added missing `Ledger` testutils trait import for `with_mut()` |
-| `docs/architecture.md` | Added "Token balance verification" to the Security Properties table |
+| `frontend/lib/wallet.ts` | Synced localStorage JWT with auth.ts on both `performSEP0010Auth()` and `disconnectWallet()` |
+| `frontend/lib/useWallet.tsx` | Added `router.push("/")` redirect on disconnect |
+| `frontend/__tests__/wallet.test.ts` | Added mock for auth.ts + 2 new tests for localStorage integration |
+| `frontend/e2e/wallet-connect.spec.ts` | Added E2E test for disconnect → redirect → unconnected state |
 
-### Functions protected by `require_transfer_succeeded`
+## Testing
 
-1. `send_tip` — tip transfer
-2. `create_escrow` — escrow deposit
-3. `open_stream` — stream deposit
-4. `top_up_stream` — stream top-up
-5. `create_multisig` — multi-sig deposit
-6. `batch_send` — batch transfers
+- **Unit tests**: All 31 `wallet.test.ts` tests pass (3 new assertions)
+- **Lint**: ESLint passes with no errors
+- **Type-check**: TypeScript `tsc --noEmit` passes with no errors
+- **E2E**: New disconnect scenario added to Playwright test suite
 
-### Testing
+## Security Impact
 
-- **Malicious token tests (7 new):** A `MaliciousToken` contract that reports successful transfers without moving funds. Each protected function is tested to confirm it panics with `"TransferFailed"`.
-- **Real token tests (2 new):** Verify that legitimate token transfers pass the balance check successfully.
-- **CI fixes:** Fixed 32 previously failing tests by correcting the `require_not_paused` TTL bump guard and updating test amounts to comply with `MIN_ESCROW_AMOUNT`.
-
-**All 40 contract tests pass.**
-
-### Security properties
-
-- **Permissionless:** No allow-list, no admin governance for new tokens
-- **No new trusted roles:** The balance check uses existing token contract queries
-- **Constant gas overhead:** Two additional `balance()` reads per deposit
-- **Backward compatible:** All existing legitimate token transfers continue to work
+- Stale JWT tokens are now properly cleared on wallet disconnect
+- API calls after disconnect will not carry an `Authorization` header (prevents session confusion)
+- The fix is backward compatible — existing auth flows continue to work unchanged
