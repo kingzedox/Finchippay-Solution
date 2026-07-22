@@ -277,7 +277,23 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
 
-  # ─── Validate Config ───────────────────────────────────────────────────────
+# --- Lighthouse -----------------------------------------------------------
+  lighthouse:
+    name: Lighthouse CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - run: npx lhci autorun
+
+  # --- Validate Config -------------------------------------------------------
   validate:
     name: Validate Config & Env
     runs-on: ubuntu-latest
