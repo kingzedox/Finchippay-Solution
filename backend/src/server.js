@@ -49,6 +49,7 @@ const { requireJsonContentType } = require("./middleware/bodyParsing");
 const { trackHttpMetrics } = require("./middleware/metrics");
 const metricsRoutes = require("./routes/metrics");
 const { correlationMiddleware, getRequestId } = require("./utils/correlationId");
+const { initRedis, closeRedis } = require("./services/cacheService");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -346,7 +347,10 @@ async function gracefulShutdown(signal, server, otelSdk) {
     if (err) logger.error({ err }, "Error closing HTTP server");
   });
 
-  // 2. Flush OTel spans (time-boxed at 5 s)
+  // 2. Close Redis connection
+  await closeRedis();
+
+  // 3. Flush OTel spans (time-boxed at 5 s)
   if (otelSdk) {
     try {
       await Promise.race([
@@ -368,6 +372,10 @@ async function gracefulShutdown(signal, server, otelSdk) {
 
 if (require.main === module) {
   validateEnv();
+  // Initialise Redis connection (non-blocking; degrades gracefully if unavailable)
+  initRedis().catch((err) => {
+    logger.error({ err }, "Redis initialisation failed");
+  });
   const server = app.listen(PORT, () => {
     console.log(`
   ✨ Finchippay Solution API
