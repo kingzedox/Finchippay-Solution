@@ -1,58 +1,45 @@
-# Bug: Wallet disconnect does not clear JWT token — stale auth persists across sessions
+## Summary
 
-**Closes #89**
+Emits complete, structured events for the contract entry points that were missing or under-specified them, so off-chain indexers can reconstruct escrow/stream/multisig/batch state without replaying every ledger or reading storage.
 
-## Problem
+## Type of change
 
-The application uses two separate JWT token storage mechanisms that were not synchronized:
+- [ ] Bug fix
+- [x] New feature
+- [x] Documentation update
+- [ ] Refactor / chore
+- [x] Smart contract change
 
-1. **In-memory token** (`frontend/lib/wallet.ts`): A module-level `jwtToken` variable managed by `setJwtToken()`/`getJwtToken()` — used during the SEP-0010 auth flow.
-2. **LocalStorage token** (`frontend/lib/auth.ts`): Persisted under `finchippay_auth_token` — used by API calls to set the `Authorization: Bearer <token>` header.
+## Related issue
 
-When a user disconnected their Freighter wallet:
-- `useWallet.tsx` called `wallet.disconnectWallet()` which cleared only the **in-memory** token
-- The **localStorage** token (`finchippay_auth_token`) was never cleared
-- Subsequent API requests continued including the stale `Authorization` header
-- No redirect to the landing page occurred
+Closes #55
 
-## Solution
+## Changes
 
-### 1. Sync localStorage on auth (`frontend/lib/wallet.ts`)
-- `performSEP0010Auth()` now persists the JWT to localStorage via `auth.setJwtToken(token)` after storing it in memory
-- `disconnectWallet()` now clears localStorage via `auth.clearJwtToken()` in addition to clearing the in-memory token
-
-### 2. Redirect on disconnect (`frontend/lib/useWallet.tsx`)
-- Added `useRouter` from `next/router`
-- `disconnectWallet()` now calls `router.push("/")` to redirect the user to the landing page after disconnecting
-- `router` is included in the `useMemo` dependency array
-
-### 3. Updated unit tests (`frontend/__tests__/wallet.test.ts`)
-- Added mock for `@/lib/auth`
-- New test: `disconnectWallet clears localStorage auth token` — verifies `clearJwtToken()` is called
-- New test: `persists JWT token to localStorage on successful auth` — verifies `setJwtToken()` is called with the correct token
-
-### 4. Added E2E test (`frontend/e2e/wallet-connect.spec.ts`)
-- New scenario 4: "disconnect wallet clears JWT token and redirects to landing page"
-- Verifies: connect wallet → disconnect via navbar → confirm → redirect to `/` → connect button visible
-
-## Files Changed
-
-| File | Change |
-|------|--------|
-| `frontend/lib/wallet.ts` | Synced localStorage JWT with auth.ts on both `performSEP0010Auth()` and `disconnectWallet()` |
-| `frontend/lib/useWallet.tsx` | Added `router.push("/")` redirect on disconnect |
-| `frontend/__tests__/wallet.test.ts` | Added mock for auth.ts + 2 new tests for localStorage integration |
-| `frontend/e2e/wallet-connect.spec.ts` | Added E2E test for disconnect → redirect → unconnected state |
+- `cancel_escrow`: renamed `escrow_cancel` → `escrow_cancelled`, topic reduced to `(escrow_cancelled,)`, data now `(id, from, amount)`.
+- `top_up_stream`: renamed `stream_topup` → `stream_topped_up`, topic reduced to `(stream_topped_up,)`, data now `(id, payer, added, new_deposit)`.
+- `cancel_multisig`: renamed `multisig_cancel` → `multisig_cancelled`, topic reduced to `(multisig_cancelled,)`, data now `(id, proposer, amount)`.
+- `batch_send`: renamed `batch_send` event → `batch_sent`, topic reduced to `(batch_sent,)`, data now `(from, count, total_amount)` — `total_amount` is accumulated via `checked_add` across the fan-out loop.
+- Verified `rescue_tokens` already emits `(rescue_tokens,)` with `(token_address, amount, to)`, matching the required single-symbol topic pattern — added a regression test since none previously existed.
+- Added a "Event Catalogue" section to `docs/architecture.md` cataloguing every contract event (topics, data, emitting function), including the ones changed here.
 
 ## Testing
 
-- **Unit tests**: All 31 `wallet.test.ts` tests pass (3 new assertions)
-- **Lint**: ESLint passes with no errors
-- **Type-check**: TypeScript `tsc --noEmit` passes with no errors
-- **E2E**: New disconnect scenario added to Playwright test suite
+- [ ] Tested locally on Testnet
+- [x] Added/updated unit tests
+- [ ] Manually tested UI flow
 
-## Security Impact
+Added 5 new unit tests in `contracts/finchippay-contract/src/lib.rs` that assert on `env.events().all().filter_by_contract(&contract_id)`, verifying exact topics and data for `escrow_cancelled`, `stream_topped_up`, `multisig_cancelled`, `batch_sent`, and `rescue_tokens`.
 
-- Stale JWT tokens are now properly cleared on wallet disconnect
-- API calls after disconnect will not carry an `Authorization` header (prevents session confusion)
-- The fix is backward compatible — existing auth flows continue to work unchanged
+Note: `cargo test` currently fails to build in this environment even on a clean checkout of `master` (verified via `git stash`), due to an upstream dependency conflict — `soroban-env-host 27.0.0`'s test utilities pull in a `ChaCha20Rng` that no longer satisfies `ed25519_dalek::rand_core::CryptoRng` under the currently resolved `rand_core` versions. This is unrelated to this PR and wasn't addressed here. The non-test contract code was verified with `cargo check --lib`, which compiles cleanly (only pre-existing `#[deprecated]` warnings on `Events::publish`, consistent with the rest of the file).
+
+## Screenshots (if UI change)
+
+N/A — contract-only change.
+
+## Checklist
+
+- [x] My code follows the project style
+- [x] I've updated docs if needed
+- [ ] No console errors or warnings
+- [x] I've rebased on latest `main`

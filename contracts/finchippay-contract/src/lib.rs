@@ -870,8 +870,10 @@ impl FinchippayContract {
             .set(&DataKey::Escrow(id), &escrow);
         bump(&env, &DataKey::Escrow(id));
 
-        env.events()
-            .publish((Symbol::new(&env, "escrow_cancel"), id), (escrow.from, escrow.amount));
+        env.events().publish(
+            (Symbol::new(&env, "escrow_cancelled"),),
+            (id, escrow.from, escrow.amount),
+        );
     }
 
     /// Return the escrow record for `id`.
@@ -1042,8 +1044,8 @@ impl FinchippayContract {
         bump(&env, &DataKey::Stream(stream_id));
 
         env.events().publish(
-            (Symbol::new(&env, "stream_topup"), stream_id),
-            (payer, amount),
+            (Symbol::new(&env, "stream_topped_up"),),
+            (stream_id, payer, amount, stream.deposited),
         );
     }
 
@@ -1484,8 +1486,8 @@ impl FinchippayContract {
         bump(&env, &DataKey::MultiSig(proposal_id));
 
         env.events().publish(
-            (Symbol::new(&env, "multisig_cancel"), proposal_id),
-            (proposer, proposal.amount),
+            (Symbol::new(&env, "multisig_cancelled"),),
+            (proposal_id, proposer, proposal.amount),
         );
     }
 
@@ -1568,10 +1570,12 @@ impl FinchippayContract {
             }
         }
         let token = get_token_client(&env, &token_address);
+        let mut total_amount: i128 = 0;
         for i in 0..recipients.len() {
             let to = recipients.get(i).unwrap();
             let amount = amounts.get(i).unwrap();
             require_transfer_succeeded(&env, &token, &from, &to, &amount);
+            total_amount = total_amount.checked_add(amount).expect("overflow");
 
             let total: i128 = env
                 .storage()
@@ -1607,8 +1611,10 @@ impl FinchippayContract {
             bump(&env, &DataKey::TipRecord(to.clone(), count));
         }
 
-        env.events()
-            .publish((Symbol::new(&env, "batch_send"), from), recipients.len());
+        env.events().publish(
+            (Symbol::new(&env, "batch_sent"),),
+            (from, recipients.len(), total_amount),
+        );
     }
 }
 
@@ -1619,8 +1625,8 @@ impl FinchippayContract {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger},
-        Address, Env, Symbol,
+        testutils::{Address as _, Events as _, Ledger},
+        vec, Address, Env, IntoVal, Symbol,
     };
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -2565,5 +2571,188 @@ mod tests {
         client.batch_send(&token_id, &from, &recipients, &amounts);
         assert_eq!(client.get_tip_total(&to1), 500);
         assert_eq!(client.get_tip_total(&to2), 700);
+    }
+
+    // ── Event emission ────────────────────────────────────────────────────────
+    // Regression coverage for issue #55: every state-changing entry point must
+    // emit a structured event carrying enough fields to reconstruct state
+    // without reading storage.
+
+    #[test]
+    fn test_cancel_escrow_emits_escrow_cancelled_event() {
+        let env = Env::default();
+        let (contract_id, client) = deploy(&env);
+        let admin = client.get_admin();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &from, 200);
+        let release = env.ledger().sequence() + 50;
+        let id = client.create_escrow(&token_id, &from, &to, &200, &release, &Symbol::new(&env, "e2"));
+        client.cancel_escrow(&id);
+
+        let events = env.events().all().filter_by_contract(&contract_id);
+        assert_eq!(
+            events,
+            vec![
+                &env,
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "init"),).into_val(&env),
+                    admin.into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "escrow_create"), id).into_val(&env),
+                    (from.clone(), to.clone(), 200i128, release).into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "escrow_cancelled"),).into_val(&env),
+                    (id, from, 200i128).into_val(&env),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_top_up_stream_emits_stream_topped_up_event() {
+        let env = Env::default();
+        let (contract_id, client) = deploy(&env);
+        let admin = client.get_admin();
+        let payer = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &payer, 10_000);
+        let sid = client.open_stream(&token_id, &payer, &recipient, &10, &1_000);
+        client.top_up_stream(&sid, &payer, &500);
+
+        let events = env.events().all().filter_by_contract(&contract_id);
+        assert_eq!(
+            events,
+            vec![
+                &env,
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "init"),).into_val(&env),
+                    admin.into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "stream_open"), sid).into_val(&env),
+                    (payer.clone(), recipient.clone(), 10i128, 1_000i128).into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "stream_topped_up"),).into_val(&env),
+                    (sid, payer, 500i128, 1_500i128).into_val(&env),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_cancel_multisig_emits_multisig_cancelled_event() {
+        let env = Env::default();
+        let (contract_id, client) = deploy(&env);
+        let admin = client.get_admin();
+        let proposer = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let signer = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &proposer, 5_000);
+        let mut signers = soroban_sdk::Vec::new(&env);
+        signers.push_back(signer);
+        let id = client.create_multisig(&token_id, &proposer, &recipient, &2_000, &1, &signers, &0);
+        client.cancel_multisig(&id, &proposer);
+
+        let events = env.events().all().filter_by_contract(&contract_id);
+        assert_eq!(
+            events,
+            vec![
+                &env,
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "init"),).into_val(&env),
+                    admin.into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "multisig_create"), id).into_val(&env),
+                    (proposer.clone(), recipient.clone(), 2_000i128, 1u32).into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "multisig_cancelled"),).into_val(&env),
+                    (id, proposer, 2_000i128).into_val(&env),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_batch_send_emits_batch_sent_event() {
+        let env = Env::default();
+        let (contract_id, client) = deploy(&env);
+        let admin = client.get_admin();
+        let from = Address::generate(&env);
+        let to1 = Address::generate(&env);
+        let to2 = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &from, 1_000);
+        let mut recipients = soroban_sdk::Vec::new(&env);
+        recipients.push_back(to1);
+        recipients.push_back(to2);
+        let mut amounts = soroban_sdk::Vec::new(&env);
+        amounts.push_back(300i128);
+        amounts.push_back(200i128);
+        client.batch_send(&token_id, &from, &recipients, &amounts);
+
+        let events = env.events().all().filter_by_contract(&contract_id);
+        assert_eq!(
+            events,
+            vec![
+                &env,
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "init"),).into_val(&env),
+                    admin.into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "batch_sent"),).into_val(&env),
+                    (from, 2u32, 500i128).into_val(&env),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_rescue_tokens_emits_rescue_tokens_event() {
+        let env = Env::default();
+        let (contract_id, client) = deploy(&env);
+        let admin = client.get_admin();
+        let to = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &contract_id, 400);
+        client.rescue_tokens(&admin, &token_id, &400, &to);
+
+        let events = env.events().all().filter_by_contract(&contract_id);
+        assert_eq!(
+            events,
+            vec![
+                &env,
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "init"),).into_val(&env),
+                    admin.into_val(&env),
+                ),
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "rescue_tokens"),).into_val(&env),
+                    (token_id, 400i128, to).into_val(&env),
+                ),
+            ]
+        );
     }
 }
