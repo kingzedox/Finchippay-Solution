@@ -278,7 +278,7 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/turrets", turretsRoutes);
 app.use("/api/tips", tipsRoutes);
 app.use("/api/parse-payment", parsePaymentRoutes);
-app.use("/api/scheduled-txns", scheduledTransactionRoutes);
+app.use("/api/scheduled-transactions", scheduledTransactionRoutes);
 app.use("/api/sep24", sep24Routes);
 app.use("/federation", federationRoutes);
 app.use("/metrics", metricsRoutes);
@@ -376,6 +376,7 @@ if (require.main === module) {
   initRedis().catch((err) => {
     logger.error({ err }, "Redis initialisation failed");
   });
+  require("./services/scheduledTransactionService").loadActiveSchedules();
   const server = app.listen(PORT, () => {
     console.log(`
   ✨ Finchippay Solution API

@@ -234,4 +234,4 @@ function startMonitoring(webhook) {
   logger.info({ type: "horizon_monitoring_started", publicKey: webhook.publicKey });
 }
 
-module.exports = { registerWebhook, getWebhooksByPublicKey, deleteWebhook, signPayload };
+module.exports = { registerWebhook, getWebhooksByPublicKey, deleteWebhook, signPayload, deliverWebhook };
