@@ -44,6 +44,7 @@ const sep12Routes = require("./routes/sep12");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
 const { startTurretsServer } = require("./turretsServer");
+const eventIndexer = require("./services/eventIndexer");
 const logger = require("./utils/logger");
 const { validateEnv, parseAllowedOrigins } = require("./config/validateEnv");
 const { requireJsonContentType } = require("./middleware/bodyParsing");
@@ -398,9 +399,16 @@ if (require.main === module) {
   });
 
   startTurretsServer();
+  eventIndexer.start();
 
-  process.on("SIGTERM", () => gracefulShutdown("SIGTERM", server, otelSdk));
-  process.on("SIGINT", () => gracefulShutdown("SIGINT", server, otelSdk));
+  process.on("SIGTERM", () => {
+    eventIndexer.stop();
+    gracefulShutdown("SIGTERM", server, otelSdk);
+  });
+  process.on("SIGINT", () => {
+    eventIndexer.stop();
+    gracefulShutdown("SIGINT", server, otelSdk);
+  });
 }
 
 module.exports = app;
