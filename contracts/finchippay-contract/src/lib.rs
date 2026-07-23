@@ -593,6 +593,13 @@ impl FinchippayContract {
         val
     }
 
+    /// Stable alias for `get_tip_total`. The dashboard and analytics pages
+    /// call this instead of the backend analytics endpoint so that tip data
+    /// is always read from the canonical on-chain source.
+    pub fn tip_total(env: Env, address: Address) -> i128 {
+        Self::get_tip_total(env, address)
+    }
+
     /// Return the number of tips received by `recipient`.
     pub fn get_tip_count(env: Env, recipient: Address) -> u32 {
         let key = DataKey::TipCount(recipient);
@@ -601,6 +608,13 @@ impl FinchippayContract {
             bump(&env, &key);
         }
         val
+    }
+
+    /// Stable alias for `get_tip_count`. The dashboard and analytics pages
+    /// call this instead of the backend analytics endpoint so that tip data
+    /// is always read from the canonical on-chain source.
+    pub fn tip_count(env: Env, address: Address) -> u32 {
+        Self::get_tip_count(env, address)
     }
 
     /// Return the tip record at `index` for `recipient`.
@@ -901,6 +915,12 @@ impl FinchippayContract {
             .persistent()
             .get(&DataKey::EscrowCount)
             .unwrap_or(0)
+    }
+
+    /// Stable alias for `get_escrow_count`. Provides a consistent SDK
+    /// binding for dashboard and analytics consumers.
+    pub fn escrow_count(env: Env) -> u32 {
+        Self::get_escrow_count(env)
     }
 
 
@@ -1254,6 +1274,13 @@ impl FinchippayContract {
             .unwrap_or(0)
     }
 
+    /// Stable alias for `get_stream_count`. Generates a consistent SDK
+    /// binding name that will not change across contract upgrades, making
+    /// dashboard and analytics integrations resilient to internal refactors.
+    pub fn stream_count(env: Env) -> u32 {
+        Self::get_stream_count(env)
+    }
+
     // Internal: compute claimable amount for a stream at the current ledger.
     fn _claimable(env: &Env, stream: &Stream) -> i128 {
         if stream.closed {
@@ -1522,6 +1549,12 @@ impl FinchippayContract {
             .persistent()
             .get(&DataKey::MultiSigCount)
             .unwrap_or(0)
+    }
+
+    /// Stable alias for `get_multisig_count`. Provides a consistent SDK
+    /// binding for dashboard and analytics consumers.
+    pub fn multisig_count(env: Env) -> u32 {
+        Self::get_multisig_count(env)
     }
 
     // ─── Diagnostic helpers ───────────────────────────────────────────────────
@@ -2521,6 +2554,114 @@ mod tests {
 
         let (e1, s1, m1) = client.get_contract_stats();
         assert_eq!((e1, s1, m1), (1, 1, 0));
+    }
+
+    // ── Dashboard view-function aliases ───────────────────────────────────
+    // These tests cover the five stable short-name aliases introduced in #62.
+    // Each alias simply delegates to its `get_*` counterpart; the tests verify
+    // that counts increment correctly after creating records and that the
+    // per-address tip functions return the same values as the originals.
+
+    #[test]
+    fn test_stream_count_alias_increments_after_open() {
+        let env = Env::default();
+        let (_, client) = deploy(&env);
+        let admin = client.get_admin();
+        let payer = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &payer, 5_000);
+
+        assert_eq!(client.stream_count(), 0);
+        client.open_stream(&token_id, &payer, &recipient, &10, &1_000);
+        assert_eq!(client.stream_count(), 1);
+        client.open_stream(&token_id, &payer, &recipient, &5, &500);
+        assert_eq!(client.stream_count(), 2);
+        // Alias agrees with the canonical getter.
+        assert_eq!(client.stream_count(), client.get_stream_count());
+    }
+
+    #[test]
+    fn test_escrow_count_alias_increments_after_create() {
+        let env = Env::default();
+        let (_, client) = deploy(&env);
+        let admin = client.get_admin();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &from, 10_000);
+
+        assert_eq!(client.escrow_count(), 0);
+        let release = env.ledger().sequence() + 10;
+        let memo = Symbol::new(&env, "e");
+        client.create_escrow(&token_id, &from, &to, &2_000, &release, &memo);
+        assert_eq!(client.escrow_count(), 1);
+        client.create_escrow(&token_id, &from, &to, &2_000, &release, &memo);
+        assert_eq!(client.escrow_count(), 2);
+        // Alias agrees with the canonical getter.
+        assert_eq!(client.escrow_count(), client.get_escrow_count());
+    }
+
+    #[test]
+    fn test_multisig_count_alias_increments_after_create() {
+        let env = Env::default();
+        let (_, client) = deploy(&env);
+        let admin = client.get_admin();
+        let proposer = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let s1 = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &proposer, 5_000);
+
+        assert_eq!(client.multisig_count(), 0);
+        let expiry = env.ledger().sequence() + 1_000;
+        let signers = soroban_sdk::Vec::from_array(&env, [s1.clone()]);
+        client.create_multisig(&token_id, &proposer, &recipient, &1_000, &1, &signers, &expiry);
+        assert_eq!(client.multisig_count(), 1);
+        client.create_multisig(&token_id, &proposer, &recipient, &1_000, &1, &signers, &expiry);
+        assert_eq!(client.multisig_count(), 2);
+        // Alias agrees with the canonical getter.
+        assert_eq!(client.multisig_count(), client.get_multisig_count());
+    }
+
+    #[test]
+    fn test_tip_count_alias_matches_get_tip_count() {
+        let env = Env::default();
+        let (_, client) = deploy(&env);
+        let admin = client.get_admin();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &from, 2_000);
+
+        // Before any tips.
+        assert_eq!(client.tip_count(&to), 0);
+        client.send_tip(&token_id, &from, &to, &300, &Symbol::new(&env, "t1"));
+        assert_eq!(client.tip_count(&to), 1);
+        client.send_tip(&token_id, &from, &to, &500, &Symbol::new(&env, "t2"));
+        assert_eq!(client.tip_count(&to), 2);
+        // Alias agrees with the canonical getter.
+        assert_eq!(client.tip_count(&to), client.get_tip_count(&to));
+    }
+
+    #[test]
+    fn test_tip_total_alias_matches_get_tip_total() {
+        let env = Env::default();
+        let (_, client) = deploy(&env);
+        let admin = client.get_admin();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        env.mock_all_auths();
+        let token_id = create_token(&env, &admin, &from, 3_000);
+
+        // Before any tips.
+        assert_eq!(client.tip_total(&to), 0);
+        client.send_tip(&token_id, &from, &to, &400, &Symbol::new(&env, "a"));
+        assert_eq!(client.tip_total(&to), 400);
+        client.send_tip(&token_id, &from, &to, &600, &Symbol::new(&env, "b"));
+        assert_eq!(client.tip_total(&to), 1_000);
+        // Alias agrees with the canonical getter.
+        assert_eq!(client.tip_total(&to), client.get_tip_total(&to));
     }
 
     // ── Minimum amount enforcement ────────────────────────────────────────

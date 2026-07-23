@@ -1261,7 +1261,7 @@ export async function getContractTipTotal(recipient: string): Promise<string> {
       { fee: STELLAR_BASE_FEE_STROOPS_STRING, networkPassphrase: NETWORK_PASSPHRASE }
     )
       .addOperation(
-        contract.call("get_tip_total", nativeToScVal(recipient, { type: "address" }))
+        contract.call("tip_total", nativeToScVal(recipient, { type: "address" }))
       )
       .setTimeout(30)
       .build();
@@ -1277,6 +1277,44 @@ export async function getContractTipTotal(recipient: string): Promise<string> {
   } catch (err) {
     console.error("Failed to query tip total:", err);
     return "0";
+  }
+}
+
+/**
+ * Call the on-chain `tip_count` view function for `recipient`.
+ *
+ * Uses the stable alias introduced in #62 so the binding is resilient to
+ * internal contract refactors. Falls back to 0 when CONTRACT_ID is unset or
+ * the simulation fails.
+ *
+ * @param recipient - Stellar public key of the tip recipient.
+ * @returns A promise resolving to the number of tips received.
+ */
+export async function getContractTipCount(recipient: string): Promise<number> {
+  if (!CONTRACT_ID) return 0;
+
+  try {
+    const contract = new Contract(CONTRACT_ID);
+    const tx = new TransactionBuilder(
+      new Account(recipient, "0"),
+      { fee: STELLAR_BASE_FEE_STROOPS_STRING, networkPassphrase: NETWORK_PASSPHRASE }
+    )
+      .addOperation(
+        contract.call("tip_count", nativeToScVal(recipient, { type: "address" }))
+      )
+      .setTimeout(30)
+      .build();
+
+    const sim = await sorobanServer.simulateTransaction(tx);
+
+    if (rpc.Api.isSimulationSuccess(sim) && sim.result) {
+      return Number(scValToNative(sim.result.retval));
+    }
+
+    return 0;
+  } catch (err) {
+    console.error("Failed to query on-chain tip count:", err);
+    return 0;
   }
 }
 
