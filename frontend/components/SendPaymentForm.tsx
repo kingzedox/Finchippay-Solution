@@ -999,7 +999,7 @@ function SendPaymentForm({
         <button
           onClick={openConfirmation}
           disabled={!canSubmit || status !== "idle"}
-          className="btn-primary w-full flex items-center justify-center gap-2"
+          className="btn-primary w-full min-h-[44px] flex items-center justify-center gap-2"
         >
           {status === "idle" ? `${t("sendPayment.send")} ${amount || ""} ${selectedAsset}` : t("sendPayment.processing")}
         </button>

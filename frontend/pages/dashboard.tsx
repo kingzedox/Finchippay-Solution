@@ -1470,7 +1470,7 @@ function MonthlySpendingChart({
       <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-white mb-6">
         {t("dashboard.monthlySpending")}
       </h2>
-      <div className="h-[250px] w-full">
+      <div className="h-[250px] w-[calc(100%+3rem)] -mx-6 sm:w-full sm:mx-0">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
@@ -1520,7 +1520,7 @@ function ThirtyDayVolumeChart({ data, loading, t }: { data: ChartDayData[]; load
   return (
     <div className="card mb-6 overflow-hidden">
       <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-white mb-6">{t("dashboard.thirtyDayVolume")}</h2>
-      <div className="h-[220px] w-full">
+      <div className="h-[220px] w-[calc(100%+3rem)] -mx-6 sm:w-full sm:mx-0">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
